@@ -5,37 +5,43 @@
 ;       (C)2024
 ;
 ;-------------------------------------------------------------------------
+;
+;
+;TODO:
+;[ ] create a more general to-draw function, that draws, not just board state, but
+;       [ ] can draw from an array of coordinates that map to 
+;        drawCol 1 2 3 4 5 xx  ;1 draws winBox, 0 skips
+;            [ ] 0 1 0 1 0 00  ;row 1
+;                1 0 1 0 1 00  
+;                0 1 0 1 0 00
+;
+;[ ] how much does 100% largeIonSprite affect performance?
+;
+;[ ] re-seed the RNG with variable contents of calc (userVars etc)
+;[ ] remove fastCopy and replace with ionFastCopy(if fastCopy isn't modified).  Modified?  N                  
+;[ ] add	a,(64/2)-(32/2) ;self modification division to solve symbol ratio performance()
+;[ ] all lines marked with ##, FIX for 16byte accuracy.(when L > $FF, requiring full HL addr.)
+;[ ] self mod HL, BC, Offset macro?
 
-.nolist
-        #define    progstart    $9D95
-.list
-; ==================================================================================================
-; TI-83 Plus Ion
-; ==================================================================================================
-
-;#ifdef TI83P
-#define	bcall(label)	RST 28h \ .dw label
+   .nolist              ;\
+   #include "ion.inc" 
+   ;#include "ion8x.inc"
+   ;#include "ti83plus.inc"  ; \
+   .list                ;  \
+#ifdef TI83P            ;   \
+   .org  progstart-2    ;    | Standard Ion
+   .db   $BB,$6D        ;   /  Program Header
+#else                   ;  /
+   .org  progstart      ; /
+#endif                  ;/
+   ret                  ; use xor a if libraries are not used
+   jr    nc,start       ; jump to the start
+                        ; of the program
+   .db   "zslots by m1nzfrisher",0
 COORD   .equ    8A3Ah
-        .org    progstart-2
-.org 9D93h
-.db $BB,$6D
-
-
-
-#include "ti83plus.inc"
-#include "ion8X.inc"
-
-;counter = saferam3
-
-;#endif
-
-               ret
-               jr      nc,START 			        ;jumps to the label START
-               .db     "SLOTS by M1nzfrisher",0	    ;The title displayed by ION
 
 START:         LD   HL,$0000
                LD   (COORD),HL
-
 
 ;turn off interrupts
                di
@@ -44,42 +50,106 @@ START:         LD   HL,$0000
                ;in a,(2)
                ;rla
                ;sbc a,a
-               ;out (20h),a
+               ;out (20h),a 
 
-SET_SCREEN1:   
-               bcall(_GrBufClr)
-               LD   HL,PLOTSSCREEN		;sets half LCD black
+               bcall(_GrBufClr)                    ;clear graph buffer(plotSScreen)
+               SET   textWrite, (IY+sgrflags)      ;set flag to write text to grbuffer, not screen.
+
+               ;LD   HL,PLOTSSCREEN		;sets half LCD black
+               ;LD   DE,PLOTSSCREEN+1
+               ;LD   (HL),$FF
+               ;LD   BC,64*12
+               ;LDIR
+
+spin:
+               ;LD   HL,$0000
+               ;LD   (COORD),HL
+
+               LD   HL, slot_cur_reel_state         ;set our pointer to beginning of board state
+               LD   (data_p), HL                    ;hl = value@data.p
+               
+               LD   HL,PLOTSSCREEN		            ;sets full LCD black
                LD   DE,PLOTSSCREEN+1
                LD   (HL),$FF
-               LD   BC,383
+               LD   BC,64*12
                LDIR
 
-               LD     HL, machine
-               LD     DE, PlotSScreen+(19*12)    ;Start at nineteenth row of display (PlotSScreen is backup screen buffer)
-               LD     BC, 35*12                  ;25 rows of data
-               LDIR                      
-               bcall(_GrBufCpy)                  ;Copies the graph backup buffer plotSScreen to the display. 
 
-               ;---need?  added to check compatibility with game exit.
-              ; LD   HL,PLOTSSCREEN		;save whole screen as background
-              ; LD   DE,SAVESSCREEN
-              ; LD   BC,768
-              ; LDIR
-               ;----need?
+              ; LD     HL, machine
+              ; LD     DE, PlotSScreen+(19*12)    ;Start at nineteenth row of display (PlotSScreen is backup screen buffer)
+              ; LD     BC, 35*12                  ;25 rows of data
+              ; LDIR                      
+               bcall(_GrBufCpy)                  ;buffer(plotSScreen) to display
+
+               ; show me the money!!------------------------
+               LD     HL, $3801
+               LD     (PenCol), HL              ; PenCol comes before PenRow- 
+              ; LD     HL, symbols+coin+_name
+              ; bcall(_VPutS)
+
+	          ; bcall(_setxxop1)            ;place A into OP1
+
+               ;LD      L, b
+               ;LD      H, 00h
+               ;LD      hl, sym_bonus
+	           ;bcall(_setxxxxop2)          ;puts 16bit(xxxx) HL into OP2
+	           ;bcall(_op2toop1)            ;OP2 to OP1   
+	           ;bcall(_dispop1a)            ;write OP1 to screen, at (PenCol, PenRow)
+
+
+               LD hl, (money)
+               LD bc, 1000
+               add  hl, bc
+               LD   (money), hl
 
                ;initialize x,y
-               LD  HL, COORD
-               LD  A, (HL)
-               ADD A, 12
-               LD (COORD), a
+               LD   HL, $000C           ;x
+               LD   (COORD), HL
+               LD   HL, $0017           ;y
+               LD   (COORD+1), HL
 
-               LD HL, COORD+1
-               LD A, (HL)
-               ADD A, 23
-               LD (HL), A
-               ;LD   IX,slot_sprites              ;Entry point of reel art column
+               ;enter with these lines to skip rng and debug custom board from state.
+               ;ld hl, slot_cur_reel_state
+               ;ld (data_p), hl
+               ;jr draw_COL
 
-               jp draw_COL
+    
+genStore_15_rng:  
+               CALL rng8toA             ;8bit rand -> A register, HL becomes new seed
+               ld e, 1                  ;offset counter, start at 1 instead of 0, to not overflow 
+               ld HL, ratio_table    
+               ;ld a, 20
+               LD d, (HL)               ;first %value in the ratio table (0-40)/255->B
+roll_prob:       
+            
+               cp d
+               jp c, rollz
+               inc hl
+               ld d, (HL)
+               inc e
+               jp nz, roll_prob
+               ;-----debug
+               ;bcall(_setxxop1)            ;place A into OP1
+	           ;bcall(_dispop1a)            ;write OP1 to screen, at (PenCol, PenRow)
+               ;-----debug
+               ;call fastCopy
+
+rollz:        
+               ;ld a, e                             ;Loading 0 into A overflows _setxxop1() 
+
+               LD  HL, (data_p)                     ;_curstate address
+               LD (HL), e                           ;new data -> indirectly into _curstate 
+               INC HL                               ;HL     now points to _curstate+1 address
+               LD (data_p), HL                      ;data_p now points to _curstate+1 address
+               ld a, (HL)
+               cp $0F
+               jr nz, genStore_15_rng
+                
+               ld hl, slot_cur_reel_state
+               ld (data_p), hl
+
+               jr draw_COL
+
 
 moveXright:    
                LD HL, COORD
@@ -88,45 +158,50 @@ moveXright:
                LD (COORD), A
                LD A, (COORD)
                CP 92
-               JR Z, MAIN_LOOP_PREP
+               JP Z, MAIN_LOOP_PREP
 
 resetY:
                LD   HL, COORD+1
                LD   A, 17h
                LD   (COORD+1), A
                LD   L, A               ;set initial Y to top reel.
-draw_COL:      LD   IX, slot_sprites+0         
-               ;========================================== 
-               ;Top-Left reel( 0Ch(+16offset),17h(+20offset) )
-               ;==========================================
 
-               ;draw a random symbol next (should be based a function of the paid reel)
-               bcall(_Random)                    ;OP1 = random number (.0 - .1)
-               LD A, ($8490)                       ;$8490 is the address where the rand int is stored. (after the decimal)
-               AND 1111b
-               ADD A, A
-               ADD A, A
-               ADD A, A
+;=============================================== 
+;Top-Left reel( 0Ch(+16offset),17h(+20offset) )
+;===============================================      
 
-               ld  L, A
-               LD  H, 00h
-               LD  E, L
+
+;[ ]
+;
+draw_COL:           
+               LD HL, (data_p)
+               LD A, (HL)
+               INC HL
+               LD (data_p), HL
+
+               ADD A, A                    ;E contains 1-8 result of the rng symbol
+               ADD A, A                    ;(1-8)*8 = sprite offset
+               ADD A, A                    
+
+prep_spin:
+               LD  L, A                     ;offset
+               LD  H, 00h                   ;high order byte nullify
+               LD  E, L                     ;HL->ED
                LD  D, H
 
-               LD HL, slot_sprites
-               ADD HL, DE
-    
-               LD (draw_COL+2), HL         ;self modification -> overwriting the IXOffset , with $HL address.
-
-
+               LD HL, slot_sprites              ;HL = (HL + DE(Offset))
+               ADD HL, DE                       ;sprite entry + offset 
+    ;--------------------------------------------
+               LD (u_d_o+2), HL        ;self modification->overwriting the IXOffset, with $HL address.
+u_d_o:         LD   IX, slot_sprites+0                                            
                LD   HL,COORD
                LD   A,(HL)
                INC  HL
                LD   L,(HL)
                CALL XORSPR
-               CALL ionFastCopy            
+               ;CALL ionFastCopy            
 
-               LD IX, bonus+0
+               ;LD IX, bonus+0
 
                ;top to bottom drawing, 1 reel at a time
                LD HL, COORD+1
@@ -134,14 +209,33 @@ draw_COL:      LD   IX, slot_sprites+0
                ADD A, 10
                LD (COORD+1), A
                CP 53
-               jr z, moveXright
-
+               JP z, moveXright
+               
                JP draw_COL
 MAIN_LOOP_PREP:
-               CALL ionFastCopy			;put the picture on the LCD
+               ;initialize x,y
+               LD   HL, $0008           ;x
+               LD   (COORD), HL
+               LD   HL, $0016           ;y
+               LD   (COORD+1), HL
+
+               LD IX, win_box
+               CALL XORSPR_L
+
+               LD   HL, $0018           ;x
+               LD   (COORD), HL
+               LD   HL, $0016          ;y
+               LD   (COORD+1), HL
+               LD IX, win_box
+               CALL XORSPR_L
+               CALL fastCopy			    ;put the picture on the LCD
+
+               CALL chk_win_prep
+               
+
 
                ;Setup the keyboard to read from the group containing [ENTER] through [CLEAR]
-               ld a,%11111101
+               LD a,%11111101
                out (1),a
 MAIN_LOOP:     
 
@@ -154,13 +248,13 @@ MAIN_LOOP:
                 ;CALL Z,SPIN_ENTER
                 ;CP kClear
                 ;jr nz, MAIN_LOOP
-                ;CALL DELAY              ;delay to slow down the ball
-               ;CALL RESET_SCREEN		;recall the background in PLOTSSCREEN
+                ;CALL DELAY              ;delay 
+                ;CALL RESET_SCREEN		;recall the background in PLOTSSCREEN
 
                 ;check if [ENTER] is being pressed
                 in a,(1)
                 and 01h
-                CALL z,START
+                CALL z,spin
                 ;check if [CLEAR] is being pressed
                 in a,(1)
                 and 40h
@@ -168,7 +262,6 @@ MAIN_LOOP:
                 
                 ret
                 
-
 SINGLE_BET:
                RET
 DOUBLE_BET:
@@ -188,17 +281,15 @@ REEL1:
                LD (HL), A
                LD IX,slot_sprites
 
-
 SPIN_LOOP:      
-
                ;prep registers for display
                LD   HL,COORD
                LD   A,(HL)
                INC  HL
                LD   L,(HL)
-
                CALL XORSPR
-               CALL ionFastCopy 
+               
+               ;CALL ionFastCopy 
                ;CALL DELAY
 
                ;lets go vertical
@@ -215,7 +306,6 @@ SPIN_LOOP:
                CP 53
                CALL Z, SPIN_RESET
 
-    
                JR SPIN_LOOP
 
 SPIN_RESET_X:
@@ -223,11 +313,124 @@ SPIN_RESET_X:
                LD a, 0Ch
                LD (COORD), a
                RET
-SP_PUT:
+
+;checks win conditions against board condition for payable circumstance
+;payrules:      1-15 reel offset x 5
+;_reel_state:   current board
+;_reel_state[payrules[i]]
+;pay_rules[i] == slot_cur_reel_state[pay
+;slot_cur_reel_state:  
+;           1     2    3               5....                       A    B                             ;term 
+;    .db    $02, $03, $04, $02, $03,   $04, $02, $03, $04, $02,    $03, $04, $02, $03, $08,    $0F
+;
+;pay_rules:   
+;    .db    $02, $05, $08, $0B, $0E              ;pay line 1
+;    .db    $01, $04, $07, $0A, $0D              ;         2-3
+;
+;
+;prep_spin:
+;               LD  L, A                     ;offset
+;               LD  H, 00h                   ;high order byte nullify
+;               LD  E, L                     ;HL->ED
+;               LD  D, H
+;
+;               LD HL, slot_sprites              ;HL = (HL + DE(Offset))
+;               ADD HL, DE                       ;sprite entry + offset 
+;    ;--------------------------------------------
+;               LD (u_d_o+2), HL        ;self modification->overwriting the IXOffset, with $HL address.
+;u_d_o:         LD   IX, slot_sprites+0  
+chk_win_prep:  
+               ld a, 1
+               ld (COORD), a    ;y axis of 2D array
+               ld HL, pay_rules
+               ld a, l
+               ld (offsetc), a
+CHK_WIN:     
+;19EEA
+offsetc        .equ     $+1     ;points to low order byte in pay_rules address
+               LD HL, pay_rules
+               ;jump to next row of pay rules    
+               LD (data_p), HL
+               ld a, (offsetc)   ;a = AE       
+               add a, 6          ;a = B4
+               ld (offsetc), a   ;
+               LD C, 0
+       
+chk_loop:      
+;19EFA
+               LD A,  (HL)                      ;offset   
+               dec A                            ;offsets need to be zero index,
+               LD L,  A
+
+               LD H,  00h
+               LD E,  L
+               LD D,  H
+                      
+               LD HL, slot_cur_reel_state       ;HL = (HL + DE(Offset))
+               ADD HL, DE
+               LD (u_d_c+2), HL                 ;self modification->overwriting the IXOffset, with $HL address.
+u_d_c:         LD IX, slot_cur_reel_state+0
+               LD A, (IX)                       ;A holds first reel to compare**correct
+                                
+chk_loop2:     
+               ld hl, (data_p)
+               INC hl                           ;point to next pay rule  
+               ld (data_p), hl                   
+               LD  B, (HL)                      ;next offset**correct   
+               dec B                           ;offsets need to be zero index,
+
+               LD L, B
+               LD H, 00h
+               LD E, L
+               LD D, H
+        
+               LD HL, slot_cur_reel_state       ;HL = (HL + DE(Offset))
+               ADD HL, DE
+               LD (u_d_e+2), HL                 ;self modification->overwriting the IXOffset, with $HL address.
+u_d_e:         LD IX, slot_cur_reel_state+0
+    
+;19F28
+               LD E, (IX)                       ;2nd reel to compare |**A is correct here.
+               INC C
+               cp E
+               jr z, chk_loop2
+               ;a no match condition has been reached.  
+               ld a, c
+               ;cp 3                             ;was a win booked before matches ended?
+               ;jp nc, win_anim                ;deal with win & return to find new wins
+               
+               bcall(_setxxop1)            ;place A into OP1
+	           bcall(_dispop1a)            ;write OP1 to screen, at (PenCol, PenRow)
+               ;-----debug
+               call fastCopy
+               ld HL, COORD
+               ld a, (HL)
+               INC (HL)                 ;go to next set of pay_rules (Ycolumn)
+               cp 9
+               jr c, CHK_WIN
+               ret
+
+win_anim:
+               
+
+;19F3D
+               bcall(_setxxop1)            ;place A into OP1
+	           bcall(_dispop1a)            ;write OP1 to screen, at (PenCol, PenRow)
+               ;-----debug
+               call fastCopy
+               ret
+;Put large sprite
+;B = height
+;C = width / 8
+XORSPR_L:         
+               LD   B, 10
+               LD   C, 2
                LD   HL,COORD
                LD   A,(HL)
                INC  HL
                LD   L,(HL)
+               CALL IonLargeSprite
+               ret
                ;LD   IX,slot_sprites
 
 ;-----> Draw a sprite
@@ -235,18 +438,65 @@ SP_PUT:
 ; l=yc
 ; a=xc
 ; ix holds pointer
-XORSPR:
-               LD   B,8                         ;size of the sprite
-               CALL ionPutSprite
-               ;CALL ionPutSprite
-               RET
-;------
+;Output:   Sprite is XORed to the graph buffer.
+;ix->next sprite
+;Destroys: af bc de hl ix
 
-Reset_Screen:  LD   HL,SAVESSCREEN
-               LD   DE,PLOTSSCREEN
-               LD   BC,768
-               LDIR
-               RET
+XORSPR:
+                LD   B,8                         ;size of the sprite
+                CALL ionPutSprite
+                ;CALL ionPutSprite
+                RET
+;------
+buffer_to_backup:  
+                LD   HL,PLOTSSCREEN		;save whole screen as background
+                LD   DE,SAVESSCREEN
+                LD   BC,768
+                LDIR
+                ret
+backup_to_buffer:   
+                LD   HL,SAVESSCREEN
+                LD   DE,PLOTSSCREEN
+                LD   BC,768
+                LDIR
+                RET
+;fastCopy() by Joe Wigerbermuel
+;   copies the screen buffer to the display, instantly
+;   chops buffer into vertical slices and pushes them from offscreen into their correct coordinates
+;----------------------------------------------------
+;I can use ionFastCopy, but I placed the source contents in-line to see if I can only copy 
+;a portion of the buffer to the screen.  
+;Remove and replace with ionFastCopy if not modified.
+;Modified?  N
+fastCopy:
+	di
+	ld	a,$80				; 7
+	out	($10),a				; 11
+	ld	hl,gbuf-12-(-(12*64)+1)		; 10
+	ld	a,$20				; 7
+	ld	c,a				    ; 4
+	inc	hl				    ; 6 waste
+	dec	hl				    ; 6 waste
+fastCopyAgain:
+	ld	b,64				; 7
+	inc	c				    ; 4
+	ld	de,-(12*64)+1		; 10
+	out	($10),a				; 11
+	add	hl,de				; 11
+	ld	de,10				; 10
+fastCopyLoop:
+	add	hl,de				; 11
+	inc	hl				; 6 waste
+	inc	hl				; 6 waste
+	inc	de				; 6
+	ld	a,(hl)				; 7
+	out	($11),a				; 11
+	dec	de				; 6
+	djnz	fastCopyLoop			; 13/8
+	ld	a,c				; 4
+	CP	$2B+1				; 7
+	jr	nz,fastCopyAgain		; 10/1
+	ret	
 
 DELAY:         LD   B,20
 LOOP1:         PUSH BC
@@ -255,82 +505,108 @@ LOOP2:         DJNZ LOOP2
                POP  BC
                DJNZ LOOP1
                RET
+rng8toA:
+;This code snippet is 9 bytes and 43cc
+;Inputs:
+;   HL is the input seed and must be non-zero
+;Outputs:
+;   A is the 8-bit pseudo-random number
+;   HL is the new seed value (will be non-zero)
+                  ;opcode cc
+                LD a, (rng_seed)
+                LD h, a
+                LD a, (rng_seed+1)
+                LD l, a
 
-QuickExit:
- ld sp,0
-INITSP = $-2
- ret
+                add hl,hl     ; 29    11
+                sbc a,a       ; 9F     4
+                and %00101101 ; E62D   7
+                xor l         ; AD     4
+                LD l,a        ; 6F     4
+                LD a,r        ; ED5F   9
+                add a,h       ; 84     4
+                
+                LD b, a
+                LD a, h
+                LD (rng_seed), a
+                LD a, l
+                LD (rng_seed+1), a
+                LD a, b
 
-;COORD+1:   .DB     17h
-;COORD:   .DB     0Ch
+                ret 
+;----------------------------------------------------------------------
+money_string:   .db     "Credits: ",0
+blank:          .db     "5567",0
+money:          .db     $13,$88
 
-S_Offset    .EQU    $+2
-    LD    IX, bonus+0     ; $DD $34 $00
+data_p          .db    $00,$00                  ;misc address pointer     
+
+                      
+ratio_table:           ;F   Q    K    A    Che  Coi  Thu  Bon   
+             .db       $28, $5A, $80, $A4, $C3, $DF, $F3, $FF
+
+;symbol
+;       hl*, sprite
+;        16, pay
+;    string, name
+symbols:
+sym_fun:
+            .db     %0000001,0
+            .db     10h,0
+            .db     "Fun",0
+sym_queen:  
+            .db     %00000010,0
+            .db     3Ch,0
+            .db     "Queen",0
+sym_king:
+            .db     %00000011,0
+            .db     5Ah,0
+            .db     "King",0 
+sym_ace:
+            .db     %00000100,0
+            .db     64h,0
+            .db     "Ace",0
+sym_cherry:
+            .db     %00000101,0
+            .db     96h,0
+            .db     "Cherry",0
+sym_coin:
+            .db     %00000111,0
+            .db     $C8,0
+            .db     "Coin",0
+sym_thunder:
+            .db     %00000111,0
+            .db     $FA,0
+            .db     "Coin",0
+sym_bonus:
+            .db     %00000111,0
+            .db     $C8,0
+            .db     "BONUS",0
+;
+;------SYMBOL ENUMS
+fun:        .equ    0
+queen:      .equ    8
+king:       .equ    18
+ace:        .equ    27
+cherry:     .equ    35
+coin:       .equ    46
+thunder:    .equ    55
+bonus:      .equ    64
+
+;-------NAME ENUM.NAME OFFSET
+_name:      .equ    4
+OFFSET:     .equ    6
+
+rng_seed:       .db     $AA,$AA
 
 slot_sprites:                         ;19EBC
-                .db     %00010000
-                .db     %00001000
-                .db     %00001000
-                .db     %01110011
-                .db     %11111101
-                .db     %11111101
+                .db     %11111111
                 .db     %11111001
-                .db     %01111110
-
-coin:           
-                .db     %00111100
-                .db     %01011110
-                .db     %10101111
-                .db     %10100111
-                .db     %10100111
-                .db     %10100111
-                .db     %01001110
-                .db     %00111100
-
-bonus:                              ;19ECC
-                .db     %11111111
-                .db     %11000011
-                .db     %01000010
-                .db     %00111100
-                .db     %00011000
-                .db     %01010110
-                .db     %10101011
-                .db     %11111111
-TEXT:
-                .db     %01111100
-                .db     %11111110
-                .db     %11000011
-                .db     %11000011
-                .db     %11000011
-                .db     %01111111
-                .db     %00111110
-                .db     %00000001
-
-                .db     %11000011
-                .db     %11000110
-                .db     %11001100
-                .db     %11110000
-                .db     %11110000
-                .db     %11001100
-                .db     %11000110
-                .db     %11000011
-
-                .db     %00011000
-                .db     %01111110
-                .db     %11000011
-                .db     %11000011
-                .db     %11111111
-                .db     %11111111
-                .db     %11000011
-                .db     %11000011
-
-                .db     %11111111
-                .db     %10101001
-                .db     %10010101
-                .db     %10101001
-                .db     %10010101
-                .db     %10101001
-                .db     %10010101
+                .db     %10011111
+                .db     %11111001
+                .db     %10011111
+                .db     %11111001
+                .db     %10011111
                 .db     %11111111
 
                 .db     %11111111
@@ -342,14 +618,77 @@ TEXT:
                 .db     %10011111
                 .db     %11111111
 
+                .db     %01111110
                 .db     %11111111
-                .db     %10110011
+                .db     %11000011
+                .db     %11000011
+                .db     %11000011
+                .db     %11100011
+                .db     %01111100
+                .db     %00011111
+
+                .db     %11000111
+                .db     %11000110
+                .db     %11001100
+                .db     %11111000
+                .db     %11111000
+                .db     %11001100
+                .db     %11000110
+                .db     %11000111
+
+                .db     %00011000
+                .db     %00111100
+                .db     %01100110
+                .db     %11000011
+                .db     %11111111
+                .db     %11111111
+                .db     %11000011
+                .db     %11000011
+
+                .db     %00010000
+                .db     %00001000
+                .db     %00001000
+                .db     %01110011
+                .db     %11111101
+                .db     %11111101
+                .db     %11111001
+                .db     %01111110
+        
+                .db     %00111100
+                .db     %01011110
+                .db     %10101111
+                .db     %10100111
+                .db     %10100111
+                .db     %10100111
+                .db     %01001110
+                .db     %00111100
+
+                .db     %11100111
+                .db     %00110011
                 .db     %10011001
                 .db     %11001100
                 .db     %01100110
                 .db     %00110011
-                .db     %10011001
+                .db     %00011001
                 .db     %11000110
+                                          ;19ECC
+                .db     %11111111
+                .db     %11111111
+                .db     %01000010
+                .db     %00101100
+                .db     %00110100
+                .db     %01010110
+                .db     %11111111
+                .db     %11111111
+
+                .db     %11111111
+                .db     %10101001
+                .db     %10010101
+                .db     %10101001
+                .db     %10010101
+                .db     %10101001
+                .db     %10010101
+                .db     %11111111
 
                 .db     %01111100
                 .db     %01111000
@@ -408,6 +747,18 @@ CPYRGHT:
                 .db     %11111101
                 .db     %01010101
 
+win_box:                ;16x10
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+                .db     $FF, $FF
+
 spin_anim:           
                 .db     %00000000
                 .db     %00000000
@@ -456,20 +807,20 @@ tilogo:
 machine:
     .db    $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
     .db    $00, $7F, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
-    .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $00, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $01, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $01, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $01, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $01, $00, $01, $00, $01, $00, $01, $00
+    .db    $00, $80, $00, $04, $01, $00, $01, $00, $01, $00, $01, $00
     .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
     .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
     .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
@@ -490,10 +841,57 @@ machine:
     .db    $00, $80, $01, $00, $01, $00, $01, $00, $01, $00, $01, $00
     .db    $00, $7F, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
 
-slot_reel_all_spin_anim1:
-    .db    $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    .db    $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
-    .db    $00, $A4, $73, $92, $73, $92, $73, $92, $73, $92
+;2,5,8,11,14
+;Strat             Data             Checks           OP    x     bytes             =worst case total
+;
+;check all         45               9L*5=45          CP          01                 45 + 45 = 90
+;check offset      
+;graph traverse
+
+;reel 1
+;   2, 5, 8,    11, 14  (+3)
+;reel 2
+;   1, 4, 7,    10, 13  (+3)
+;reel 3
+;   3, 6, 9,    12, 15  (+3)
+;reel 4
+;   1, 5, 9,    11, 13  (+4),    (+3), (+2)
+;reel 5
+;   3, 5, 7,    11, 15  (+2),    (+4)
+;reel 6
+;   1, 4, 8,    11, 13  (+3,+4), (+3), (+2)
+;reel 7
+;   3, 6, 8,    12, 15  (+3,+2), (+4), (+3)
+;reel 8
+;   1, 6, 7,    12, 13  (+5,+1), (+5), (+1)
+;reel 9
+;   3, 4, 9,    10, 15  (+1,+5), (+1), (+5)
+
+
+
+slot_cur_reel_state:                                                                          ;term 
+    .db    $04, $04, $04, $04, $04,   $04, $04, $04, $04, $04,    $04, $04, $04, $06, $06,    $0F
+
+
+;147AD
+;258BE
+;369CF
+pay_rules:   
+    .db    $02, $05, $08, $0B, $0E, $FF               ;pay line 1
+
+    .db    $01, $04, $07, $0A, $0D, $FF               ;         2-3
+    .db    $03, $06, $09, $0C, $0F, $FF 
+   
+    .db    $01, $05, $09, $0B, $0D, $FF               ;         3-5
+    .db    $03, $05, $07, $0B, $0F, $FF 
+    
+    .db    $01, $04, $08, $0B, $0D, $FF               ;         5-7
+    .db    $03, $06, $08, $0C, $0F, $FF 
+
+    .db    $01, $06, $07, $0C, $0D, $FF               ;         8-9
+    .db    $03, $04, $09, $0A, $0F, $EE 
+
+
 
 slot_reel_all_spin_anim1:
     .db    $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
@@ -522,32 +920,32 @@ slot_reel_all_spin_anim1:
     .db    $00, $92, $73, $92, $73, $92, $73, $92, $73, $92, $73, $00
     .db    $00, $7F, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
 
-slot_reel_all_spin_anim2:
-    .db    $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-    .db    $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
-    .db    $00, $7F, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
+;slot_reel_all_spin_anim2:
+;    .db    $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+;    .db    $00, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $A4, $FE, $00
+;    .db    $00, $7F, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FE, $00
 
 
 .end
